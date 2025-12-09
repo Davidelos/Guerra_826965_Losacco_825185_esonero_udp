@@ -1,14 +1,13 @@
 #include "protocol.h"
 
-// Funzioni Meteo (Simulazione - INVARIATE)
 float get_random_float(float min, float max) {
-    return min + (rand() / (float) RAND_MAX) * (max - min);
+    return min + (rand() / (float)RAND_MAX) * (max - min);
 }
 
-float get_temperature() { return get_random_float(-10.0, 40.0); } // Aggiornato range come da traccia
-float get_humidity()    { return get_random_float(20.0, 100.0); } // Aggiornato range
-float get_wind()        { return get_random_float(0.0, 100.0); }  // Aggiornato range
-float get_pressure()    { return get_random_float(950.0, 1050.0);}// Aggiornato range
+float get_temperature() { return get_random_float(-10.0f, 40.0f); }
+float get_humidity()   { return get_random_float(20.0f, 100.0f); }
+float get_wind()       { return get_random_float(0.0f, 100.0f); }
+float get_pressure()   { return get_random_float(950.0f, 1050.0f); }
 
 int is_city_valid(const char* city) {
     const char* valid_cities[] = {
@@ -31,23 +30,20 @@ int main(int argc, char *argv[]) {
     }
     printf("Server avviato sulla porta %d\n", port);
 
-    // Setup Winsock (solo Windows)
-    #if defined _WIN32
-        WSADATA wsa_data;
-        if (WSAStartup(MAKEWORD(2, 2), &wsa_data) != 0) {
-             printf("Errore critico: WSAStartup fallita.\n");
-             return -1;
-        }
-    #endif
+#if defined _WIN32
+    WSADATA wsa_data;
+    if (WSAStartup(MAKEWORD(2,2), &wsa_data) != 0) {
+        printf("Errore critico: WSAStartup fallita.\n");
+        return -1;
+    }
+#endif
 
-    // --- 1. Creazione Socket UDP ---
     int server_socket = socket(PF_INET, SOCK_DGRAM, 0);
     if (server_socket < 0) {
         perror("Impossibile creare il socket");
         return -1;
     }
 
-    // --- 2. Bind ---
     struct sockaddr_in server_addr;
     memset(&server_addr, 0, sizeof(server_addr));
     server_addr.sin_family = AF_INET;
@@ -62,70 +58,49 @@ int main(int argc, char *argv[]) {
 
     printf("In attesa di richieste...\n");
 
-    // --- 3. Loop Infinito ---
     while (1) {
         struct sockaddr_in client_addr;
         socklen_t client_len = sizeof(client_addr);
-        char recv_buffer[512]; // Buffer per ricevere dati grezzi
+        char recv_buffer[512];
 
-        // Ricezione datagramma
         ssize_t bytes_read = recvfrom(server_socket, recv_buffer, sizeof(recv_buffer), 0,
                                       (struct sockaddr*)&client_addr, &client_len);
+        if (bytes_read <= 0) continue;
 
-        if (bytes_read <= 0) continue; // Ignora pacchetti vuoti o errori temporanei
-
-        // --- 4. Risoluzione DNS Client per Log ---
         char client_ip[INET_ADDRSTRLEN];
         char client_host[NI_MAXHOST];
 
-        // Ottieni IP stringa
         inet_ntop(AF_INET, &(client_addr.sin_addr), client_ip, INET_ADDRSTRLEN);
 
-        // Ottieni Nome Host (Reverse Lookup)
         if (getnameinfo((struct sockaddr*)&client_addr, client_len,
-                        client_host, sizeof(client_host),
-                        NULL, 0, 0) != 0) {
-            strcpy(client_host, client_ip); // Fallback su IP se nome non risolvibile
+                        client_host, sizeof(client_host), NULL, 0, 0) != 0) {
+            strcpy(client_host, client_ip);
         }
 
-        // --- 5. Deserializzazione Manuale (Request) ---
         weather_request_t req;
         int offset = 0;
 
-        // Controlliamo di aver ricevuto almeno il tipo
-        if (bytes_read < sizeof(char)) {
-             // Pacchetto troppo piccolo, ignora o gestisci errore
-             continue;
-        }
+        if (bytes_read < (ssize_t)sizeof(char)) continue;
 
-        // Type
         memcpy(&req.type, recv_buffer + offset, sizeof(char));
         offset += sizeof(char);
 
-        // City
-        // Copiamo il resto del buffer in city.
-        // Nota: Dobbiamo stare attenti a non leggere oltre bytes_read
-        int city_data_len = bytes_read - offset;
-        if (city_data_len > CITY_LEN) city_data_len = CITY_LEN;
+        int city_len = bytes_read - offset;
+        if (city_len > CITY_LEN) city_len = CITY_LEN;
 
-        memset(req.city, 0, CITY_LEN); // Pulisci buffer destinazione
-        memcpy(req.city, recv_buffer + offset, city_data_len);
-
-        // Assicuriamo terminazione, anche se dovrebbe esserci
+        memset(req.city, 0, CITY_LEN);
+        memcpy(req.city, recv_buffer + offset, city_len);
         req.city[CITY_LEN - 1] = '\0';
 
-        // Stampa Log richiesto
         printf("Richiesta ricevuta da %s (ip %s): type='%c', city='%s'\n",
                client_host, client_ip, req.type, req.city);
 
-        // --- 6. Logica Business ---
         weather_response_t resp;
         memset(&resp, 0, sizeof(resp));
         resp.type = req.type;
 
-        // Validazione caratteri speciali e tabulazioni nella città (come da traccia)
         int valid_syntax = 1;
-        for(int k=0; k<strlen(req.city); k++) {
+        for (size_t k = 0; k < strlen(req.city); k++) {
             char c = req.city[k];
             if (c == '\t' || strchr("@#$%^&*()=<>[]{}\\|;:", c) != NULL) {
                 valid_syntax = 0;
@@ -134,50 +109,43 @@ int main(int argc, char *argv[]) {
         }
 
         if (!valid_syntax) {
-            resp.status = 2; // Richiesta invalida
+            resp.status = 2;
         } else if (!is_city_valid(req.city)) {
-            resp.status = 1; // Città non trovata
+            resp.status = 1;
+        } else if (strchr("thwp", req.type) == NULL) {
+            resp.status = 2;
         } else {
-            if (strchr("thwp", req.type) == NULL) {
-                resp.status = 2; // Tipo invalido
-            } else {
-                resp.status = 0; // Successo
-                if (req.type == 't') resp.value = get_temperature();
-                else if (req.type == 'h') resp.value = get_humidity();
-                else if (req.type == 'w') resp.value = get_wind();
-                else if (req.type == 'p') resp.value = get_pressure();
-            }
+            resp.status = 0;
+            if (req.type == 't') resp.value = get_temperature();
+            else if (req.type == 'h') resp.value = get_humidity();
+            else if (req.type == 'w') resp.value = get_wind();
+            else if (req.type == 'p') resp.value = get_pressure();
         }
 
-        // --- 7. Serializzazione Manuale (Response) ---
-        // Buffer: status(4) + type(1) + value(4)
         char send_buffer[sizeof(uint32_t) + sizeof(char) + sizeof(float)];
         offset = 0;
 
-        // Status (host -> net)
         uint32_t net_status = htonl(resp.status);
         memcpy(send_buffer + offset, &net_status, sizeof(uint32_t));
         offset += sizeof(uint32_t);
 
-        // Type
         memcpy(send_buffer + offset, &resp.type, sizeof(char));
         offset += sizeof(char);
 
-        // Value (float -> uint32 -> net)
-        uint32_t net_value_tmp;
-        memcpy(&net_value_tmp, &resp.value, sizeof(float));
-        net_value_tmp = htonl(net_value_tmp);
-        memcpy(send_buffer + offset, &net_value_tmp, sizeof(uint32_t));
+        uint32_t net_value;
+        memcpy(&net_value, &resp.value, sizeof(float));
+        net_value = htonl(net_value);
+        memcpy(send_buffer + offset, &net_value, sizeof(uint32_t));
         offset += sizeof(uint32_t);
 
-        // --- 8. Invio Risposta ---
         sendto(server_socket, send_buffer, offset, 0,
                (struct sockaddr*)&client_addr, client_len);
     }
 
     close(server_socket);
-    #if defined _WIN32
-         WSACleanup();
-    #endif
+#if defined _WIN32
+    WSACleanup();
+#endif
+
     return 0;
 }

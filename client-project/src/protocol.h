@@ -1,6 +1,8 @@
-/*
- * protocol.h
- */
+#if defined(_WIN32)
+    #ifndef _WIN32_WINNT
+        #define _WIN32_WINNT 0x0600
+    #endif
+#endif
 
 #ifndef PROTOCOL_H_
 #define PROTOCOL_H_
@@ -32,24 +34,17 @@
 #endif
 
 #define DEFAULT_PORT 56700
-#define DEFAULT_IP "localhost" /* Default cambiato a localhost come da esempi traccia, ma gestito dinamico */
 #define CITY_LEN 64
 
-/* * NOTA: Non useremo queste struct direttamente nelle sendto/recvfrom.
- * Useremo buffer di byte per serializzare/deserializzare manualmente.
- */
-
-// Messaggio di Richiesta (Client -> Server)
 typedef struct {
-    char type;           // 't', 'h', 'w', 'p'
-    char city[CITY_LEN]; // Nome della città
+    char type;
+    char city[CITY_LEN];
 } weather_request_t;
 
-// Messaggio di Risposta (Server -> Client)
 typedef struct {
-    unsigned int status; // 0=OK, 1=No Città, 2=Tipo non valido
-    char type;           // Eco del tipo di dato richiesto
-    float value;         // Il valore meteo
+    unsigned int status;
+    char type;
+    float value;
 } weather_response_t;
 
-#endif /* PROTOCOL_H_ */
+#endif
